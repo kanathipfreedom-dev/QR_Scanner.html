@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>SMS • QR Scanner</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#0b1220;color:#fff;font-family:Arial,Tahoma,sans-serif}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:18px}
+.card{width:min(520px,100%);background:#111a2e;border:1px solid #263653;border-radius:20px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+h1{font-size:22px;margin:0 0 6px}
+.sub{color:#aab7cf;font-size:14px;margin-bottom:16px}
+#reader{width:100%;overflow:hidden;border-radius:16px;background:#050914;min-height:280px}
+.status{margin-top:14px;padding:12px;border-radius:12px;background:#17233a;color:#dce6f8;font-size:14px;text-align:center}
+.result{display:none;margin-top:14px;padding:14px;border-radius:12px;background:#0f2f20;border:1px solid #1f6b45}
+.id{font-size:24px;font-weight:800;text-align:center;word-break:break-all;margin:7px 0}
+.btn{width:100%;border:0;border-radius:12px;padding:13px;font-size:16px;font-weight:700;cursor:pointer;margin-top:10px}
+.primary{background:#1677ff;color:#fff}
+.secondary{background:#263653;color:#fff}
+.help{margin-top:14px;color:#8fa0bc;font-size:12px;line-height:1.5;text-align:center}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📷 SMS QR Scanner</h1>
+  <div class="sub">สแกน QR Code จาก Scrap Tag</div>
+
+  <div id="reader"></div>
+
+  <div id="status" class="status">กำลังเตรียมกล้อง...</div>
+
+  <div id="result" class="result">
+    <div style="text-align:center">สแกนสำเร็จ</div>
+    <div id="resultId" class="id"></div>
+    <button class="btn primary" onclick="sendAgain()">↩ ส่ง ID กลับระบบ</button>
+  </div>
+
+  <button class="btn secondary" onclick="closePage()">✕ ปิด</button>
+
+  <div class="help">
+    หากกล้องไม่เปิด ให้ตรวจสอบสิทธิ์ Camera ของ Safari/Chrome<br>
+    ระบบรับเฉพาะ QR ที่เป็น Scrap ID เช่น SCR-000001
+  </div>
+</div>
+
+<script>
+let scanner = null;
+let lastId = '';
+let busy = false;
+
+const $ = id => document.getElementById(id);
+
+function status(msg, ok=false){
+  $('status').textContent = msg;
+  $('status').style.background = ok ? '#0f2f20' : '#17233a';
+  $('status').style.color = ok ? '#b8f3d0' : '#dce6f8';
+}
+
+function validScrapId(v){
+  const s = String(v || '').trim();
+  return /^SCR[-_A-Z0-9]+$/i.test(s);
+}
+
+function getReturnUrl(){
+  const p = new URLSearchParams(location.search);
+  return p.get('return') || '';
+}
+
+function sendId(id){
+  const sid = String(id || '').trim();
+  if(!sid) return;
+
+  // Preferred: send directly to the page that opened this scanner.
+  if(window.opener && !window.opener.closed){
+    try{
+      window.opener.postMessage(
+        {type:'SMS_QR_SCAN', id:sid},
+        '*'
+      );
+      status('ส่ง ID กลับระบบแล้ว', true);
+      $('result').style.display='block';
+      $('resultId').textContent=sid;
+      stopScanner();
+      return;
+    }catch(e){}
+  }
+
+  // Fallback: navigate back to the supplied return URL.
+  const returnUrl = getReturnUrl();
+  if(returnUrl){
+    try{
+      const u = new URL(returnUrl);
+      u.searchParams.set('scan', sid);
+      location.href = u.toString();
+      return;
+    }catch(e){}
+  }
+
+  status('ไม่พบหน้าระบบปลายทาง กรุณาเปิด Scanner จากหน้า Create Regrind', false);
+}
+
+function handleScan(decodedText){
+  if(busy) return;
+  const sid = String(decodedText || '').trim();
+
+  if(!validScrapId(sid)){
+    status('QR นี้ไม่ใช่ Scrap ID ที่ระบบรองรับ', false);
+    return;
+  }
+
+  busy = true;
+  lastId = sid;
+  sendId(sid);
+
+  setTimeout(()=>{ busy=false; }, 1500);
+}
+
+function stopScanner(){
+  if(scanner){
+    scanner.stop().catch(()=>{}).finally(()=>{
+      try{ scanner.clear(); }catch(e){}
+    });
+  }
+}
+
+async function startScanner(){
+  if(typeof Html5Qrcode === 'undefined'){
+    status('โหลด QR Scanner ไม่สำเร็จ กรุณาเชื่อมต่อ Internet แล้วลองใหม่', false);
+    return;
+  }
+
+  try{
+    scanner = new Html5Qrcode('reader');
+
+    const config = {
+      fps: 10,
+      qrbox: (w,h) => {
+        const size = Math.min(280, Math.floor(Math.min(w,h)*0.72));
+        return {width:size,height:size};
+      },
+      aspectRatio: 1.0
+    };
+
+    await scanner.start(
+      {facingMode:'environment'},
+      config,
+      handleScan,
+      () => {}
+    );
+
+    status('พร้อมสแกน • หันกล้องไปที่ QR ของ Scrap Tag', true);
+  }catch(err){
+    console.error(err);
+    status('เปิดกล้องไม่ได้ • กรุณาอนุญาต Camera แล้วกด Reload', false);
+  }
+}
+
+function sendAgain(){
+  if(lastId) sendId(lastId);
+}
+
+function closePage(){
+  stopScanner();
+  try{ window.close(); }catch(e){}
+  setTimeout(()=>{
+    const returnUrl = getReturnUrl();
+    if(returnUrl) location.href = returnUrl;
+  },200);
+}
+
+window.addEventListener('load', startScanner);
+window.addEventListener('beforeunload', stopScanner);
+</script>
+</body>
+</html>
